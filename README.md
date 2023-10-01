@@ -129,7 +129,7 @@ make upload
 # manual flash (WINDOWS under MSYS2)
 # (LINUX: substitue port for example with "/dev/ttyUSB0")
 # (note: we set very low baud rates here to eliminate that source of flashing problems)
-~/stcgal-patched/stcgal.py -p COM3 -l 1200 -b 1200 -t 24000 ReedTripRadio.ihx
+~/stcgal/stcgal.py -p COM3 -l 1200 -b 1200 -t 24000 ReedTripRadio.hex
 ```
 
 ### Non free flasher
