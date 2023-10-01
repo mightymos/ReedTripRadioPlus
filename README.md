@@ -37,6 +37,7 @@ Receiving radio packets requires a receiver.
 | Sonoff R2 v2.0 | bypass  | untested | untested | todo |
 | Sonoff R2 v2.2  | original  | yes | yes | todo |
 | Sonoff R2 v2.2 | bypass  | untested | yes | todo |
+| Sonoff R2 v2.2 | RF-Bridge-OB38S003  | yes | yes | todo |
 | SIGNALDuino  | original  | yes | yes | todo |
 
 
@@ -56,7 +57,7 @@ https://tasmota.github.io/docs/devices/Sonoff-RF-Bridge-433/#rf-firmware-upgrade
 RF-Bridge-EFM8BB1 is not supported on Sonoff R2 v2.2 hardware:  
 https://github.com/Portisch/RF-Bridge-EFM8BB1/issues/217
 
-However, an effort is underway to provide alternative firmware for the radio decode microcontroller on the Sonoff R2 v2.2 hardware:  
+However, work in progress alternative firmware for the radio decode microcontroller on the Sonoff R2 v2.2 hardware:  
 https://github.com/mightymos/RF-Bridge-OB38S003
 
 A hardware modification for R2 v2.2 which bypasses the radio chip so that Tasmota directly decodes is available:  
@@ -105,10 +106,11 @@ ESPHome is also an option (https://github.com/mightymos/ReedTripRadio/issues/11)
 cd ~/
 
 # flashing tool
-git clone https://github.com/area-8051/stcgal-patched.git
+git clone https://github.com/grigorig/stcgal.git
 
 # hardware abstraction layer for stc
-git clone https://github.com/area-8051/uni-STC.git
+git clone https://codeberg.org/20-100/uni-STC.git
+
 cd uni-STC/demos/
 
 # this repository

@@ -260,7 +260,7 @@ inline void disable_radio_vdd(void)
 }
 
 // specify inline to save some flash code space
-inline void radio_ask_first_logic_level()
+inline void radio_ask_first_logic_level(void)
 {
     #if PROTOCOL_INVERTED
         RADIO_ASK = 1;
@@ -269,7 +269,7 @@ inline void radio_ask_first_logic_level()
     #endif
 }
 
-inline void radio_ask_second_logic_level()
+inline void radio_ask_second_logic_level(void)
 {
     #if PROTOCOL_INVERTED
         RADIO_ASK = 0;
@@ -422,14 +422,14 @@ void send_radio_packet(const unsigned char rfcode)
 //-----------------------------------------
 //FIXME: handle reentrancy?
 // interrupt and wake up on reed pin change (default is rising and falling edge)
-void external_isr0(void) __interrupt 0
+void external_isr0(void) __interrupt (0)
 {
     flag.reedInterrupted = true;
 }
 
 //-----------------------------------------
 // interrupt and wake up on tamper switch pin change
-void external_isr1(void) __interrupt 2
+void external_isr1(void) __interrupt (2)
 {
     flag.tamperInterrupted = true;
 }
@@ -437,7 +437,7 @@ void external_isr1(void) __interrupt 2
 //-----------------------------------------
 // interrupt and wake up on battery state change
 // because isr3 is so far down on the vector table (entry 11) intermediate bytes are wasted (uses 76 bytes for almost nothing!)
-void external_isr3(void) __interrupt 11
+void external_isr3(void) __interrupt (11)
 {
     flag.batteryLowInterrupted = true;
 }
