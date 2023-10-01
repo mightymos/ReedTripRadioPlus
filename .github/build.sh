@@ -7,7 +7,7 @@ sudo apt-get install -y git sdcc cmake
 #git clone https://github.com/area-8051/stcgal-patched.git
 
 # hardware abstraction layer for stc
-git clone https://github.com/area-8051/uni-STC.git
+git clone https://codeberg.org/20-100/uni-STC.git
 cd uni-STC/demos/
 
 # this repository
