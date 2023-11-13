@@ -629,6 +629,9 @@ void main(void)
             // go ahead and send battery state, we know it is low due to interrupt
             flag.eventHistory[flag.eventCount] = gBatteryLow;            
             flag.eventCount++;
+            
+            // disable battery status interrupt so it cannot bounce around and send repeated packets
+            INT_CLKO &= ~0x20;
         }
         
         
