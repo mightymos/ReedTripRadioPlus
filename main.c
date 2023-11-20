@@ -20,6 +20,7 @@
 // uncomment only one protocol timing
 //#define PROTOCOL_STOCK
 #define PROTOCOL_ONE
+//#define PROTOCOL_TWO
 
 //---------------------------------------------------------------------------------------------
 // we need to obey rules for alarm transmission: https://www.law.cornell.edu/cfr/text/47/15.231
@@ -204,6 +205,16 @@ static const unsigned char gReedClose   = 0x0e;
     const uint16_t gZeroLow   =  105;
     const uint16_t gOneHigh   =  105;
     const uint16_t gOneLow    =   35;
+    
+    #define PROTOCOL_INVERTED false
+    
+#elif defined(PROTOCOL_TWO)
+    const uint16_t gPulseHigh =   65;
+    const uint16_t gPulseLow  =  350;
+    const uint16_t gZeroHigh  =   65;
+    const uint16_t gZeroLow   =  130;
+    const uint16_t gOneHigh   =  130;
+    const uint16_t gOneLow    =   65;
     
     #define PROTOCOL_INVERTED false
 
