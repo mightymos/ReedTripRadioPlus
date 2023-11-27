@@ -1,10 +1,11 @@
 /*
-    Alternative firmware for STC15W101/4 processor + SYN115 radio transmitter door/window reed sensor(s)
+    Alternative firmware for STC15W104 processor + SYN115 radio transmitter door/window reed sensor(s)
     (see README)
  */
 #include "project-defs.h"
 
 #include <delay.h>
+#include <uart_software.h>
 
 // just do not have much more space for HAL with 1KB flash code size
 //#include <eeprom-hal.h>
@@ -44,34 +45,6 @@
 #endif
 
 
-// keep sending switch state until alarm condition clears
-//
-// otherwise some users may only want to know about switch changes
-//  for example using the circuit board as on/off switches for lighting
-// disabling tamper also saves on battery power
-#if 1
-    #define TAMPERS_ENABLED true
-#else
-    #define TAMPERS_ENABLED false
-#endif
-
-
-// use upper bits of code as packet count to help in detecting missing packets
-#if 0
-    #define PACKET_COUNT_WITH_CODE true
-#else
-    #define PACKET_COUNT_WITH_CODE false
-#endif
-
-
-// this involves waking up from sleep regularly to track time
-//   so checking battery contributes to draining battery
-#if 0
-    #define BATTERY_TRIP_ENABLED true
-#else
-    #define BATTERY_TRIP_ENABLED false
-#endif
-
 // hardware pin definitions
 //   circuit is voltage divider and high side transistor with processor controlling divider
 //   pin 3.0 is also connected with receive pin on header
@@ -100,6 +73,8 @@
 //#define REPEAT_TRANSMISSIONS 8
 #define REPEAT_TRANSMISSIONS 20
 
+// longest protocol in bits in rcswitch project is Alecto WS-1200 weather station so 9*8 = 72 bits
+#define MAX_PACKET_BYTES 9
 
 // sec. 9, table datasheet output blanking VDD transition from low to high (500 microseconds)
 // oscillator startup time crystal HC49S (300 microseconds)
@@ -132,20 +107,6 @@
 // array size
 #define EVENT_HISTORY_SIZE 16
 
-// about 16 secs per count (assumes wktc set to full value near 0x7fff)
-// we use bitwise-and in check logic instead of modulo divide to save code space
-// about one minute
-//#define TAMPER_SLOT 4
-//#define REED_SLOT   4
-// about ten minutes
-#define TAMPER_SLOT 38
-#define REED_SLOT   38
-// about thirty minutes
-//#define TAMPER_SLOT  113
-//#define REED_SLOT    113
-#define BATTERY_SLOT 113
-// about one hour
-//#define BATTERY_SLOT 225
 
 // unique ID is stored in ram in the same locations on mcu 101/104 parts
 // see makefile - we are limiting ram size so that it is not initialized/written at these addresses
@@ -194,7 +155,7 @@ static const unsigned char gReedClose   = 0x0e;
     const uint16_t gZeroLow   =  136;
     const uint16_t gOneHigh   =  136;
     const uint16_t gOneLow    =   47;
-    
+        
     // it saves code space to just specify polarity for conditional compilation
     #define PROTOCOL_INVERTED false
 
@@ -205,20 +166,31 @@ static const unsigned char gReedClose   = 0x0e;
     const uint16_t gZeroLow   =  105;
     const uint16_t gOneHigh   =  105;
     const uint16_t gOneLow    =   35;
-    
+        
     #define PROTOCOL_INVERTED false
     
 #elif defined(PROTOCOL_TWO)
     const uint16_t gPulseHigh =   65;
-    const uint16_t gPulseLow  =  350;
+    const uint16_t gPulseLow  =  650;
     const uint16_t gZeroHigh  =   65;
     const uint16_t gZeroLow   =  130;
     const uint16_t gOneHigh   =  130;
     const uint16_t gOneLow    =   65;
-    
+        
     #define PROTOCOL_INVERTED false
 
 #endif // specify protocol
+
+
+// FIXME: add better comment
+// these are usually, though not always, divisible by eight
+const uint8_t  gProtocolBits = 24;
+//const uint8_t  gProtocolBits = 40;
+//const uint8_t  gProtocolBits = 72;
+
+
+// storage for bytes send over radio
+unsigned char packet[MAX_PACKET_BYTES];
 
 
 // set flags in interrupts, then save and send event history in main loop
@@ -246,9 +218,9 @@ struct Flags flag = {
     .tamperInterrupted     = false,
     .tamperTripped         = false,
     .reedTripped           = false,
-    .batteryLowTripped        = false,
-    .eventCount = 0,
-    .packetCount = 0,
+    .batteryLowTripped     = false,
+    .eventCount         = 0,
+    .packetCount        = 0,
     .tamperWakeupCount  = 0,
     .reedWakeupCount    = 0,
     .batteryWakeupCount = 0
@@ -312,7 +284,7 @@ inline void enable_interrupts(void)
     // EA = 1, EX1 = 1, EX0 = 1
     IE1 = 0x85;
     // EX3 = 1 for battery status
-    INT_CLKO = 0x20;
+    //INT_CLKO = 0x20;
 }
 
 
@@ -354,55 +326,19 @@ inline bool isBatteryLow(void)
  *         Tips [http://ww1.microchip.com/downloads/en/AppNotes/Atmel-9164-Manchester-Coding-Basics_Application-Note.pdf]
  *
  */  
-void send(const unsigned char byte)
+void send_radio_packet(unsigned char* packetPtr, const unsigned char bitsInPacket)
 {
-    const unsigned char numBits = 8;
-    
-    // mask out highest bit
-    const unsigned char mask = 1 << (numBits - 1);
-    
-    unsigned char i = 0;
-
-    // byte for shifting
-    unsigned char toSend = byte;
-    
-    // Repeat until all bits sent
-    for(i = 0; i < numBits; i++)
-    {
-        // mask out all but left most bit value, and if byte is not equal to zero (i.e. left most bit must be one) then send one level
-        if((toSend & mask) > 0)
-        {
-            radio_ask_second_logic_level();
-            delay10us_wrapper(gOneHigh);
-            
-            radio_ask_first_logic_level();
-            delay10us_wrapper(gOneLow);
-        }
-        else
-        {
-            radio_ask_second_logic_level();
-            delay10us_wrapper(gZeroHigh);
-            
-            radio_ask_first_logic_level();
-            delay10us_wrapper(gZeroLow);
-        }
-        
-        toSend = toSend << 1;
-    }
-}
-
-void send_radio_packet(const unsigned char rfcode)
-{
-    unsigned char index;
-    unsigned char byteToSend;
+    //unsigned char index;
+    unsigned char bitIndex;
+    unsigned char currentBit;
     
     
-    enable_radio_vdd();
-    delay1ms(RADIO_STARTUP_TIME);
+    //enable_radio_vdd();
+    //delay1ms(RADIO_STARTUP_TIME);
     
     // many receivers require repeatedly sending identical transmissions to accept data
-    for (index = 0; index < REPEAT_TRANSMISSIONS; index++)
-    {
+    //for (index = 0; index < REPEAT_TRANSMISSIONS; index++)
+    //{
         // rf sync pulse
         radio_ask_second_logic_level();
         delay10us(gPulseHigh);
@@ -411,22 +347,47 @@ void send_radio_packet(const unsigned char rfcode)
         radio_ask_first_logic_level();
         delay10us_wrapper(gPulseLow);
 
-        // send rf key with unique id and code
-        send(*guid0);
-        send(*guid1);
-        
-#if (PACKET_COUNT_WITH_CODE)
-        // effectively wraps around every sixteen counts because we only have upper four bits in radio packet available
-        byteToSend = (flag.packetCount << 4) | rfcode;
-        send(byteToSend);
-#else
-        send(rfcode);
-#endif
-    }
+        // this is similar to the atmel manchester encoding approach
+        currentBit = 0;
+        for (bitIndex = 0; bitIndex < bitsInPacket; bitIndex++)
+        {
+            if (currentBit == 8)
+            {
+                // FIXME:
+                packetPtr++;
+                
+                // FIXME: why is this done, looking for wrap around?
+                //if(packetPtr == &packet[0]){bitIndex = bitsInPacket + 1;}
+                
+                currentBit = 0;
+            }
+            
+            // mask out all but left most bit value, and if byte is not equal to zero (i.e. left most bit must be one) then send one level
+            if((*packetPtr & 0x80) == 0x80)
+            {
+                radio_ask_second_logic_level();
+                delay10us_wrapper(gOneHigh);
+                
+                radio_ask_first_logic_level();
+                delay10us_wrapper(gOneLow);
+            }
+            else
+            {
+                radio_ask_second_logic_level();
+                delay10us_wrapper(gZeroHigh);
+                
+                radio_ask_first_logic_level();
+                delay10us_wrapper(gZeroLow);
+            }
+            
+            //
+            *packetPtr = *packetPtr << 1;
+            
+            //
+            currentBit++;
+        }
+    //}
     
-    disable_radio_vdd();
-    
-    // FIXME: we need to force ask low/high just in case correct?
 }
 
 
@@ -445,13 +406,6 @@ void external_isr1(void) __interrupt (2)
     flag.tamperInterrupted = true;
 }
 
-//-----------------------------------------
-// interrupt and wake up on battery state change
-// because isr3 is so far down on the vector table (entry 11) intermediate bytes are wasted (uses 76 bytes for almost nothing!)
-void external_isr3(void) __interrupt (11)
-{
-    flag.batteryLowInterrupted = true;
-}
 
 // sec. 4.1 All port pins default to quasi-bidirectional after reset. Each one has a Schmitt-triggered input for improved input noise rejection.
 //batteryMonitor GPIO_PIN_CONFIG(GPIO_PORT3, GPIO_PIN5, GPIO_HIGH_IMPEDANCE_MODE)
@@ -487,10 +441,20 @@ void main(void)
     // makes the code easier to read below
     bool state;
     unsigned char index;
+    unsigned char repeatIndex;
+    
+    // FIXME: add comment
+    unsigned char bitsInPacket = gProtocolBits;
 
     // setup gpio
     configure_pin_modes();
     startup_pins_state();
+    
+    // software uart
+    // FIXME: this will have problems because pin is shared with radio power enable?
+    // FIXME: would need to set pin as default high in any case for software uart
+    //init_software_uart();
+    //enable_timer0();
     
     // pulse LED at startup because we delay next anyway
     led_on();
@@ -520,36 +484,13 @@ void main(void)
     // enable everything in one call to save bytes
     enable_interrupts();
     
-    // catch if battery is already low at startup
-    if (isBatteryLow())
-    {
-        flag.batteryLowInterrupted = true;
-    }
 
     // main loop
     while (true)
     {       
 
-#if TAMPERS_ENABLED
-        // only enable wake up timer if alarm wake up required, otherwise clear/disable
-        // note: sec. 3.3.1 special function registers address map shows that default state of WKTCx has default value in timer        
-        if (flag.tamperTripped | flag.reedTripped | flag.batteryLowTripped)
-        {
-            // we do not use this currently
-            flag.tamperWakeupCount++;
-            flag.reedWakeupCount++;
-            flag.batteryWakeupCount++;
-            
-            // set wake up count and enable wake up timer bit
-            WKTC = SLEEP_TIME_0;
-        } else {
-            // could just clear most significant enable bit, but guess no harm in clearing count also
-            WKTC = 0x0000;
-        }
-#endif
-        
         // check if there are unserviced interrupt(s) prior to sleeping
-        if (!(flag.reedInterrupted | flag.tamperInterrupted | flag.batteryLowInterrupted))
+        if (!(flag.reedInterrupted | flag.tamperInterrupted))
         {
             {
                 // go to sleep
@@ -559,90 +500,10 @@ void main(void)
                 // sec. 2.3.3.1 demo program in datasheet and example HAL show providing nops() after power down
                 NOP();
                 NOP();
-            }
-        }
-        
-#if TAMPERS_ENABLED
-        // tamper trip sends messages while alarm is occuring (i.e., tamper opens once and remains open)
-        // sending stops once the tamper is again closed
-        if (flag.tamperTripped)
-        {
-            if (flag.tamperWakeupCount > TAMPER_SLOT)
-            {
-                flag.tamperWakeupCount = 0;
                 
-                // only alarm for open condition
-                if (isTamperOpen())
-                {            
-                    flag.eventHistory[flag.eventCount] = gTamperOpen;
-                    flag.eventCount++;
-
-                } else {
-                    // otherwise alarm has been cleared, so disable trip
-                    flag.tamperTripped = false;
-                }
+                // DEBUG: test software uart
+                //putc(0x4A);
             }
-        }
-
-        // similar alarm message but for reed switch
-        if (flag.reedTripped)
-        {
-            if (flag.reedWakeupCount > REED_SLOT)
-            {
-                flag.reedWakeupCount = 0;
-                
-                if(isReedOpen())
-                {
-                    flag.eventHistory[flag.eventCount] = gReedOpen;
-                    flag.eventCount++;
-                } else {
-                    flag.reedTripped = false;
-                }
-            }
-        }
-#endif
-
-        
-#if BATTERY_TRIP_ENABLED
-        if (flag.batteryLowTripped)
-        {
-            // only rarely send battery state
-            if (flag.batteryWakeupCount > BATTERY_SLOT)
-            {
-                flag.batteryWakeupCount = 0;
-                
-                // go ahead and send battery state
-                if(isBatteryLow())
-                {
-                    flag.eventHistory[flag.eventCount] = gBatteryLow;
-                } else {
-                    // this logic will probably never happen
-                    //   and can assume battery is ok if no low code sent
-                    //   but go ahead and send it anyway
-                    flag.eventHistory[flag.eventCount] = gBatteryOk;
-                    flag.batteryLowTripped = false;
-                }
-                
-                flag.eventCount++;
-            }
-        }
-#endif
-
-
-        // this will only send once as battery discharges unless battery voltage bounces around
-        if (flag.batteryLowInterrupted)
-        {
-            // FIXME: debounce
-            delay10us(DEBOUNCE_TIME_10US);
-            flag.batteryLowInterrupted = false;
-            flag.batteryLowTripped = true;
-
-            // go ahead and send battery state, we know it is low due to interrupt
-            flag.eventHistory[flag.eventCount] = gBatteryLow;            
-            flag.eventCount++;
-            
-            // disable battery status interrupt so it cannot bounce around and send repeated packets
-            INT_CLKO &= ~0x20;
         }
         
         
@@ -728,10 +589,31 @@ void main(void)
             // this is smarter than using using blocking delays to pulse led
             led_on();
             
-            // send radio packet consisting of start pulse and 24-bits of data
-            send_radio_packet(flag.eventHistory[index]);
+            enable_radio_vdd();
+            delay1ms(RADIO_STARTUP_TIME);
             
-            // delay before sending next packet so as not to overwhelm receiver
+            // many receivers require repeatedly sending identical transmissions to accept data
+            for (repeatIndex = 0; repeatIndex < REPEAT_TRANSMISSIONS; repeatIndex++)
+            {
+                packet[0] = *guid0;
+                packet[1] = *guid1;
+                packet[2] = flag.eventHistory[index];
+
+                // DEBUG: for checking arbitrary data lengths at receiver
+                packet[3] = 0x4A;
+                packet[4] = 0x55;
+                
+                
+                // send radio packet consisting of start pulse and 24-bits of data
+                send_radio_packet(&packet[0], bitsInPacket);
+            }
+            
+            
+            // FIXME: we need to force ask low/high just in case correct?
+            disable_radio_vdd();
+    
+            
+            // delay before sending next packet (if available) so as not to overwhelm receiver
             delay1ms(RADIO_GUARD_TIME);
             
             // effectively just pulsed led due to inherent delays of radio sending

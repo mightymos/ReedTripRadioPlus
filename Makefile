@@ -69,7 +69,7 @@ MEMORY_SIZES = \
     --iram-size 113 \
     --xram-size 0 \
     --stack-size $(STACK_SIZE) \
-    --code-size 1017
+    --code-size 4089
 
 #
 MEMORY_MODEL := --model-small
@@ -80,12 +80,12 @@ HAS_DUAL_DPTR := n
 include ../../makefiles/0-directories.mk
 
 # Project settings -----------------------------------------------------
-PROJECT_NAME := ReedTripRadio
+PROJECT_NAME := ReedTripRadioPlus
 
 SRCS := \
     $(HAL_DIR)/delay.c \
 	main.c
-
+    
 CONSOLE_BAUDRATE := 19200
 CONSOLE_PORT := ttyUSB0
 
